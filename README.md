@@ -45,6 +45,44 @@ Automated Bug Bounty Recon Tool is a **Python-based ethical hacking project** fo
 
 ---
 
+# Usage
+Run the tool:
+python3 recon_tool.py -d example.com
+
+Optional flags:
+-w → Use custom wordlist:
+python3 recon_tool.py -d example.com -w /usr/share/wordlists/
+
+---
+
+Output
+
+Reports are saved in the reports/ folder and include:
+Domain/IP resolution
+Subdomains discovered
+Open ports and services
+Open directories/endpoints
+SSL/TLS info
+HTTP headers
+CMS detection
+Basic vulnerabilities (XSS, SQLi, LFI)
+Admin pages & exposed emails
+Screenshots (if enabled)
+Example report: example.com_recon_report_20250826_2200.txt
+
+...
+
+License
+This project is licensed under the MIT License. See LICENSE for details.
+
+...
+
+Disclaimer
+This tool is intended solely for educational purposes or authorized penetration testing. Do not use it on systems you do not own or have explicit permission to test. Unauthorized usage may be illegal.
+
+... 
+
+
 ## Installation
 Clone the repository:
 ```bash
