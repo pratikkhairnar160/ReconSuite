@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Ultimate Bug Bounty Recon Tool (Fast + Threaded)
 # Author: Pratik Khairnar
-# Updated: Enhanced SSL, CMS, threads, HTTPS support
+# Fully Updated: Subdomains, Ports, Directories, SSL, CMS, Vulns, Emails, Screenshots
 # Note: Educational / authorized testing only.
 
 import argparse
@@ -234,6 +234,125 @@ def detect_cms(url):
     return cms
 
 # -------------------------------
+# Vuln scanners: XSS/SQLi/LFI
+# -------------------------------
+def vuln_scan(base_urls, threads=20):
+    note("Starting basic vuln checks (XSS/SQLi/LFI) ...")
+    findings = []
+    tests = []
+    for base in base_urls:
+        test_url = base if '?' in base else base.rstrip('/') + '/?q='
+        tests.append(("XSS", test_url, '<script>alert(1)</script>'))
+        tests.append(("SQLi", test_url, "' OR '1'='1"))
+        tests.append(("LFI", test_url, '../../../../etc/passwd'))
+
+    def run_test(vtype, test_url, payload):
+        try:
+            r = SESSION.get(test_url + payload, timeout=3)
+            body = r.text.lower()
+            if vtype == "XSS" and payload.lower() in body:
+                msg = f"[!] Potential XSS at {test_url}"
+                info(msg)
+                return msg
+            if vtype == "SQLi" and any(e in body for e in ["sql syntax", "mysql", "syntax error", "unclosed quotation"]):
+                msg = f"[!] Possible SQLi at {test_url}"
+                info(msg)
+                return msg
+            if vtype == "LFI" and "root:" in body:
+                msg = f"[!] LFI at {test_url}"
+                info(msg)
+                return msg
+        except Exception:
+            pass
+        return None
+
+    with ThreadPoolExecutor(max_workers=threads) as exe:
+        futures = [exe.submit(run_test, v, u, p) for (v, u, p) in tests]
+        for fut in as_completed(futures):
+            res = fut.result()
+            if res:
+                findings.append(res)
+    return findings
+
+# -------------------------------
+# Admin page scan
+# -------------------------------
+def admin_scan(base_urls, threads=20):
+    note("Scanning for common admin pages ...")
+    paths = ["admin", "administrator", "login", "wp-admin", "cms", "dashboard", "admin/login"]
+    found = []
+    def probe(base, path):
+        url = f"{base.rstrip('/')}/{path}"
+        try:
+            r = SESSION.get(url, timeout=2)
+            if r.status_code in (200, 301, 302, 401, 403):
+                info(f"Admin page? {url} [{r.status_code}]")
+                return url
+        except Exception:
+            pass
+        return None
+
+    with ThreadPoolExecutor(max_workers=threads) as exe:
+        futures = [exe.submit(probe, b, p) for b in base_urls for p in paths]
+        for fut in as_completed(futures):
+            res = fut.result()
+            if res:
+                found.append(res)
+    return found
+
+# -------------------------------
+# Email leak scan
+# -------------------------------
+def email_scan(base_urls, threads=20):
+    note("Scanning for exposed emails ...")
+    emails = set()
+    regex = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"
+    def scrape(url):
+        try:
+            r = SESSION.get(url, timeout=3)
+            return re.findall(regex, r.text)
+        except Exception:
+            return []
+
+    with ThreadPoolExecutor(max_workers=threads) as exe:
+        futures = [exe.submit(scrape, u) for u in base_urls]
+        for fut in as_completed(futures):
+            for e in fut.result():
+                emails.add(e)
+    if emails:
+        info(f"Emails found: {len(emails)}")
+    return sorted(emails)
+
+# -------------------------------
+# Optional screenshot
+# -------------------------------
+def take_screenshot(url, outdir="reports"):
+    if not SCREENSHOT_ENABLED:
+        return None
+    os.makedirs(outdir, exist_ok=True)
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-gpu")
+    try:
+        driver = webdriver.Chrome(options=options)
+    except Exception as e:
+        warn(f"Selenium/Chrome issue: {e}")
+        return None
+    try:
+        driver.set_page_load_timeout(10)
+        driver.get(url)
+        fn = f"{outdir}/{urlparse(url).netloc}_screenshot.png"
+        driver.save_screenshot(fn)
+        info(f"Screenshot saved: {fn}")
+        return fn
+    except Exception as e:
+        warn(f"Screenshot failed for {url}: {e}")
+        return None
+    finally:
+        driver.quit()
+
+# -------------------------------
 # Reporting
 # -------------------------------
 def generate_report(domain, results):
@@ -316,12 +435,17 @@ def main():
         cms[b] = detect_cms(b)
     results["CMS"] = cms
 
+    results["Vulnerabilities"] = vuln_scan(base_urls, threads=args.threads)
+    results["Admin Pages"] = admin_scan(base_urls, threads=args.threads)
+    results["Exposed Emails"] = email_scan(base_urls, threads=args.threads)
+
+    if SCREENSHOT_ENABLED and not args.no_screenshots:
+        shots = {}
+        for b in base_urls:
+            shots[b] = take_screenshot(b)
+        results["Screenshots"] = shots
+
     generate_report(args.domain, results)
     note("\nRecon Completed Successfully!")
 
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\n[!] Interrupted by user. Exiting...")
-        sys.exit(0)
+if __name__ ==
