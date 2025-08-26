@@ -11,48 +11,64 @@ from datetime import datetime
 # -------------------------------
 
 def subdomain_enum(domain):
-    """Enumerate subdomains using Sublist3r (must be installed)"""
+    """Enumerate subdomains using Sublist3r"""
     print(f"[+] Enumerating subdomains for {domain}...")
     os.makedirs("reports", exist_ok=True)
     output_file = f"reports/{domain}_subdomains.txt"
+
     try:
         subprocess.run(["sublist3r", "-d", domain, "-o", output_file], check=True)
-        print(f"[+] Subdomains saved to {output_file}")
+    except FileNotFoundError:
+        print("[-] Sublist3r not installed or not in PATH. Skipping subdomain enumeration.")
+        return []
     except Exception as e:
         print(f"[-] Sublist3r error: {e}")
         return []
-    with open(output_file, "r") as f:
-        subdomains = [line.strip() for line in f.readlines()]
-    return subdomains
+
+    if os.path.exists(output_file):
+        with open(output_file, "r") as f:
+            subdomains = [line.strip() for line in f.readlines()]
+        print(f"[+] Found {len(subdomains)} subdomains.")
+        return subdomains
+    else:
+        print("[-] Subdomain output file not created.")
+        return []
 
 def port_scan(ip):
     """Scan common ports using Nmap"""
     if not ip:
+        print("[*] No IP provided, skipping port scan.")
         return []
+
     print(f"[+] Scanning ports for {ip}...")
     nm = nmap.PortScanner()
+    open_ports = []
+
     try:
         nm.scan(ip, '1-1000')
+        if ip in nm.all_hosts():
+            for proto in nm[ip].all_protocols():
+                ports = nm[ip][proto].keys()
+                open_ports.extend(list(ports))
+        print(f"[+] Open ports: {open_ports}")
     except Exception as e:
         print(f"[-] Nmap scan error: {e}")
-        return []
-    open_ports = []
-    if ip in nm.all_hosts():
-        for proto in nm[ip].all_protocols():
-            ports = nm[ip][proto].keys()
-            open_ports.extend(list(ports))
-    print(f"[+] Open ports: {open_ports}")
+
     return open_ports
 
 def check_directories(url, wordlist="wordlists/common_dirs.txt"):
     """Check for open directories"""
     if not url:
+        print("[*] No URL provided, skipping directory check.")
         return []
+
     print(f"[+] Checking directories on {url}...")
     found_dirs = []
+
     if not os.path.exists(wordlist):
-        print(f"[-] Wordlist {wordlist} not found")
+        print(f"[-] Wordlist {wordlist} not found, skipping directory check.")
         return found_dirs
+
     with open(wordlist, "r") as f:
         for line in f:
             test_url = f"{url.rstrip('/')}/{line.strip()}"
@@ -63,6 +79,8 @@ def check_directories(url, wordlist="wordlists/common_dirs.txt"):
                     found_dirs.append(test_url)
             except requests.RequestException:
                 continue
+
+    print(f"[+] Found {len(found_dirs)} directories.")
     return found_dirs
 
 def generate_report(domain, subdomains, ports, directories):
@@ -70,6 +88,7 @@ def generate_report(domain, subdomains, ports, directories):
     os.makedirs("reports", exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     report_file = f"reports/{domain}_recon_report_{timestamp}.txt"
+
     with open(report_file, "w") as f:
         f.write(f"Bug Bounty Recon Report\nDomain: {domain}\n\n")
         f.write("Subdomains:\n")
@@ -81,6 +100,7 @@ def generate_report(domain, subdomains, ports, directories):
         f.write("\nOpen Directories:\n")
         for d in directories:
             f.write(f" - {d}\n")
+
     print(f"[+] Report generated: {report_file}")
 
 # -------------------------------
@@ -93,9 +113,12 @@ if __name__ == "__main__":
     parser.add_argument("-u", "--url", required=False, help="Target URL for directory checking")
     args = parser.parse_args()
 
+    print("[*] Starting recon tool...")
+
     subdomains = subdomain_enum(args.domain)
     ports = port_scan(args.ip)
     directories = check_directories(args.url)
 
     generate_report(args.domain, subdomains, ports, directories)
 
+    print("[*] Recon tool finished.")
