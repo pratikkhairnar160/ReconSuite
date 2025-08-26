@@ -11,18 +11,19 @@ from datetime import datetime
 # -------------------------------
 
 def subdomain_enum(domain):
-    """Enumerate subdomains using Sublist3r"""
-    print(f"[+] Enumerating subdomains for {domain}...")
+    """Enumerate subdomains using Subfinder"""
+    print(f"[+] Enumerating subdomains for {domain} using Subfinder...")
     os.makedirs("reports", exist_ok=True)
     output_file = f"reports/{domain}_subdomains.txt"
 
     try:
-        subprocess.run(["sublist3r", "-d", domain, "-o", output_file], check=True)
+        # -silent to suppress logs, -o to output to file
+        subprocess.run(["subfinder", "-d", domain, "-silent", "-o", output_file], check=True)
     except FileNotFoundError:
-        print("[-] Sublist3r not installed or not in PATH. Skipping subdomain enumeration.")
+        print("[-] Subfinder not installed or not in PATH. Skipping subdomain enumeration.")
         return []
     except Exception as e:
-        print(f"[-] Sublist3r error: {e}")
+        print(f"[-] Subfinder error: {e}")
         return []
 
     if os.path.exists(output_file):
@@ -31,7 +32,7 @@ def subdomain_enum(domain):
         print(f"[+] Found {len(subdomains)} subdomains.")
         return subdomains
     else:
-        print("[-] Subdomain output file not created.")
+        print("[-] Subfinder output file not created.")
         return []
 
 def port_scan(ip):
