@@ -5,13 +5,28 @@ import nmap
 import requests
 import os
 from datetime import datetime
+import shutil
+import sys
 
 # -------------------------------
 # Functions
 # -------------------------------
 
+def check_tool(tool_name):
+    """Check if a binary is in PATH"""
+    path = shutil.which(tool_name)
+    if path:
+        print(f"[+] {tool_name} found at {path}")
+        return True
+    else:
+        print(f"[-] {tool_name} not found in PATH. Install it before proceeding.")
+        return False
+
 def subdomain_enum(domain):
     """Enumerate subdomains using Subfinder"""
+    if not check_tool("subfinder"):
+        return []
+
     print(f"[+] Enumerating subdomains for {domain} using Subfinder...")
     os.makedirs("reports", exist_ok=True)
     output_file = f"reports/{domain}_subdomains.txt"
@@ -25,18 +40,21 @@ def subdomain_enum(domain):
         )
         subdomains = result.stdout.splitlines()
         if subdomains:
+            print(f"[+] Found {len(subdomains)} subdomains:")
+            for s in subdomains:
+                print(f"    - {s}")
             with open(output_file, "w") as f:
                 for s in subdomains:
                     f.write(f"{s}\n")
-            print(f"[+] Found {len(subdomains)} subdomains. Saved to {output_file}")
+            print(f"[+] Subdomains saved to {output_file}")
         else:
             print("[-] No subdomains found.")
         return subdomains
     except subprocess.CalledProcessError as e:
-        print(f"[-] Subfinder failed: {e.stderr}")
+        print(f"[-] Subfinder error:\n{e.stderr}")
         return []
-    except FileNotFoundError:
-        print("[-] Subfinder not found. Make sure it is in your PATH.")
+    except Exception as e:
+        print(f"[-] Subfinder unexpected error: {e}")
         return []
 
 def port_scan(ip):
@@ -45,7 +63,10 @@ def port_scan(ip):
         print("[*] No IP provided, skipping port scan.")
         return []
 
-    print(f"[+] Scanning ports for {ip}...")
+    if not check_tool("nmap"):
+        return []
+
+    print(f"[+] Scanning ports for {ip} with Nmap...")
     nm = nmap.PortScanner()
     open_ports = []
 
@@ -55,7 +76,7 @@ def port_scan(ip):
             for proto in nm[ip].all_protocols():
                 ports = nm[ip][proto].keys()
                 open_ports.extend(list(ports))
-        print(f"[+] Open ports: {open_ports}")
+        print(f"[+] Open ports: {open_ports if open_ports else 'None found'}")
     except Exception as e:
         print(f"[-] Nmap scan error: {e}")
 
@@ -67,9 +88,9 @@ def check_directories(url, wordlist=None):
         print("[*] No URL provided, skipping directory check.")
         return []
 
-    # Use default Kali wordlist if none provided
+    # Default Kali wordlist if none provided
     if not wordlist:
-        wordlist = "/usr/share/wordlists/john.txt"
+        wordlist = "/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt"
 
     if not os.path.exists(wordlist):
         print(f"[-] Wordlist {wordlist} not found, skipping directory check.")
@@ -85,14 +106,16 @@ def check_directories(url, wordlist=None):
                 continue
             test_url = f"{url.rstrip('/')}/{line}"
             try:
-                r = requests.get(test_url, timeout=3)
+                r = requests.get(test_url, timeout=5)
+                print(f"[*] Testing {test_url} -> Status: {r.status_code}")
                 if r.status_code == 200:
                     print(f"[+] Found directory: {test_url}")
                     found_dirs.append(test_url)
-            except requests.RequestException:
+            except requests.RequestException as e:
+                print(f"[-] Request error for {test_url}: {e}")
                 continue
 
-    print(f"[+] Found {len(found_dirs)} directories.")
+    print(f"[+] Total directories found: {len(found_dirs)}")
     return found_dirs
 
 def generate_report(domain, subdomains, ports, directories):
@@ -101,19 +124,21 @@ def generate_report(domain, subdomains, ports, directories):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     report_file = f"reports/{domain}_recon_report_{timestamp}.txt"
 
-    with open(report_file, "w") as f:
-        f.write(f"Bug Bounty Recon Report\nDomain: {domain}\n\n")
-        f.write("Subdomains:\n")
-        for s in subdomains:
-            f.write(f" - {s}\n")
-        f.write("\nOpen Ports:\n")
-        for p in ports:
-            f.write(f" - {p}\n")
-        f.write("\nOpen Directories:\n")
-        for d in directories:
-            f.write(f" - {d}\n")
-
-    print(f"[+] Report generated: {report_file}")
+    try:
+        with open(report_file, "w") as f:
+            f.write(f"Bug Bounty Recon Report\nDomain: {domain}\n\n")
+            f.write("Subdomains:\n")
+            for s in subdomains:
+                f.write(f" - {s}\n")
+            f.write("\nOpen Ports:\n")
+            for p in ports:
+                f.write(f" - {p}\n")
+            f.write("\nOpen Directories:\n")
+            for d in directories:
+                f.write(f" - {d}\n")
+        print(f"[+] Report successfully generated: {report_file}")
+    except Exception as e:
+        print(f"[-] Failed to write report: {e}")
 
 # -------------------------------
 # Main
@@ -126,12 +151,17 @@ if __name__ == "__main__":
     parser.add_argument("-w", "--wordlist", required=False, help="Custom wordlist for directory checking")
     args = parser.parse_args()
 
-    print("[*] Starting recon tool...")
+    print("[*] Starting recon tool...\n")
 
-    subdomains = subdomain_enum(args.domain)
-    ports = port_scan(args.ip)
-    directories = check_directories(args.url, args.wordlist)
-
-    generate_report(args.domain, subdomains, ports, directories)
-
-    print("[*] Recon tool finished.")
+    try:
+        subdomains = subdomain_enum(args.domain)
+        ports = port_scan(args.ip)
+        directories = check_directories(args.url, args.wordlist)
+        generate_report(args.domain, subdomains, ports, directories)
+        print("\n[*] Recon tool finished successfully.")
+    except KeyboardInterrupt:
+        print("\n[!] User interrupted execution.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n[-] Unexpected error: {e}")
+        sys.exit(1)
