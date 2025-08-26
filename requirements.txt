@@ -1,2 +1,10 @@
-requests
-python-nmap
+requests>=2.27.1
+python-nmap>=0.7.1
+argparse
+subprocess-run
+dnspython
+tldextract
+beautifulsoup4
+selenium
+python-whois
+sslscan
