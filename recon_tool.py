@@ -17,22 +17,26 @@ def subdomain_enum(domain):
     output_file = f"reports/{domain}_subdomains.txt"
 
     try:
-        # -silent to suppress logs, -o to output to file
-        subprocess.run(["subfinder", "-d", domain, "-silent", "-o", output_file], check=True)
-    except FileNotFoundError:
-        print("[-] Subfinder not installed or not in PATH. Skipping subdomain enumeration.")
-        return []
-    except Exception as e:
-        print(f"[-] Subfinder error: {e}")
-        return []
-
-    if os.path.exists(output_file):
-        with open(output_file, "r") as f:
-            subdomains = [line.strip() for line in f.readlines()]
-        print(f"[+] Found {len(subdomains)} subdomains.")
+        result = subprocess.run(
+            ["subfinder", "-d", domain, "-silent"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        subdomains = result.stdout.splitlines()
+        if subdomains:
+            with open(output_file, "w") as f:
+                for s in subdomains:
+                    f.write(f"{s}\n")
+            print(f"[+] Found {len(subdomains)} subdomains. Saved to {output_file}")
+        else:
+            print("[-] No subdomains found.")
         return subdomains
-    else:
-        print("[-] Subfinder output file not created.")
+    except subprocess.CalledProcessError as e:
+        print(f"[-] Subfinder failed: {e.stderr}")
+        return []
+    except FileNotFoundError:
+        print("[-] Subfinder not found. Make sure it is in your PATH.")
         return []
 
 def port_scan(ip):
@@ -63,7 +67,7 @@ def check_directories(url, wordlist=None):
         print("[*] No URL provided, skipping directory check.")
         return []
 
-    # Use default John the Ripper wordlist if none provided
+    # Use default Kali wordlist if none provided
     if not wordlist:
         wordlist = "/usr/share/wordlists/john.txt"
 
