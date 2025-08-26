@@ -45,7 +45,7 @@ def port_scan(ip):
     open_ports = []
 
     try:
-        nm.scan(ip, '1-1000')
+        nm.scan(ip, '1-1024')
         if ip in nm.all_hosts():
             for proto in nm[ip].all_protocols():
                 ports = nm[ip][proto].keys()
@@ -56,22 +56,29 @@ def port_scan(ip):
 
     return open_ports
 
-def check_directories(url, wordlist="wordlists/common_dirs.txt"):
+def check_directories(url, wordlist=None):
     """Check for open directories"""
     if not url:
         print("[*] No URL provided, skipping directory check.")
         return []
 
-    print(f"[+] Checking directories on {url}...")
-    found_dirs = []
+    # Use default John the Ripper wordlist if none provided
+    if not wordlist:
+        wordlist = "/usr/share/wordlists/john.txt"
 
     if not os.path.exists(wordlist):
         print(f"[-] Wordlist {wordlist} not found, skipping directory check.")
-        return found_dirs
+        return []
 
-    with open(wordlist, "r") as f:
+    print(f"[+] Checking directories on {url} using wordlist {wordlist}...")
+    found_dirs = []
+
+    with open(wordlist, "r", errors="ignore") as f:
         for line in f:
-            test_url = f"{url.rstrip('/')}/{line.strip()}"
+            line = line.strip()
+            if not line:
+                continue
+            test_url = f"{url.rstrip('/')}/{line}"
             try:
                 r = requests.get(test_url, timeout=3)
                 if r.status_code == 200:
@@ -111,13 +118,14 @@ if __name__ == "__main__":
     parser.add_argument("-d", "--domain", required=True, help="Target domain")
     parser.add_argument("-i", "--ip", required=False, help="Target IP for port scanning")
     parser.add_argument("-u", "--url", required=False, help="Target URL for directory checking")
+    parser.add_argument("-w", "--wordlist", required=False, help="Custom wordlist for directory checking")
     args = parser.parse_args()
 
     print("[*] Starting recon tool...")
 
     subdomains = subdomain_enum(args.domain)
     ports = port_scan(args.ip)
-    directories = check_directories(args.url)
+    directories = check_directories(args.url, args.wordlist)
 
     generate_report(args.domain, subdomains, ports, directories)
 
