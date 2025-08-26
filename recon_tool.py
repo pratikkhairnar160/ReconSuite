@@ -88,9 +88,9 @@ def check_directories(url, wordlist=None):
         print("[*] No URL provided, skipping directory check.")
         return []
 
-    # Default Kali wordlist if none provided
+    # Default John wordlist if none provided
     if not wordlist:
-        wordlist = "/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt"
+        wordlist = "/usr/share/wordlists/john.lst"
 
     if not os.path.exists(wordlist):
         print(f"[-] Wordlist {wordlist} not found, skipping directory check.")
