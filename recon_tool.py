@@ -1,363 +1,327 @@
 #!/usr/bin/env python3
+# Ultimate Bug Bounty Recon Tool (Fast + Threaded)
+# Author: Pratik Khairnar
+# Updated: Enhanced SSL, CMS, threads, HTTPS support
+# Note: Educational / authorized testing only.
+
 import argparse
-import subprocess
-import nmap
-import requests
 import os
-from datetime import datetime
-import socket
-import shutil
+import re
 import sys
 import ssl
-import urllib3
-import re
+import socket
+import shutil
+import subprocess
+from datetime import datetime
 from urllib.parse import urlparse
 
-# Optional screenshot
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Optional: Selenium screenshots
 try:
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
     SCREENSHOT_ENABLED = True
-except ImportError:
+except Exception:
     SCREENSHOT_ENABLED = False
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+requests.packages.urllib3.disable_warnings()
+
+SECLISTS_COMMON_DIRS_URL = "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt"
+DEFAULT_WORDLIST = "wordlists/common_dirs.txt"
 
 # -------------------------------
-# Helper Functions
+# Console helpers
 # -------------------------------
-def check_tool(tool_name):
-    path = shutil.which(tool_name)
+def info(msg): print(f"[+] {msg}")
+def warn(msg): print(f"[-] {msg}")
+def note(msg): print(f"[*] {msg}")
+
+# -------------------------------
+# Environment checks
+# -------------------------------
+def check_tool(name):
+    path = shutil.which(name)
     if path:
-        print(f"[+] {tool_name} found at {path}")
+        info(f"{name} found at {path}")
         return True
-    else:
-        print(f"[-] {tool_name} not found. Please install it.")
-        return False
+    warn(f"{name} not found. Please install it.")
+    return False
 
-def resolve_ip(domain):
+# -------------------------------
+# Wordlist setup
+# -------------------------------
+def ensure_wordlist(path=DEFAULT_WORDLIST):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.exists(path):
+        return path
     try:
-        ip = socket.gethostbyname(domain)
-        print(f"[+] {domain} resolved to IP: {ip}")
+        note(f"Downloading default directory wordlist to {path} ...")
+        r = requests.get(SECLISTS_COMMON_DIRS_URL, timeout=15)
+        r.raise_for_status()
+        with open(path, "wb") as f:
+            f.write(r.content)
+        info("Wordlist downloaded.")
+    except Exception as e:
+        warn(f"Failed to download wordlist: {e}")
+        with open(path, "w") as f:
+            f.write("\n".join([
+                "admin", "login", "administrator", "wp-admin", "cms",
+                "dashboard", "config", "uploads", "images", "assets",
+                "css", "js", "includes", "cgi-bin", "backup", "test",
+                "dev", "staging", "api", "robots.txt", "sitemap.xml"
+            ]))
+        info("Wrote a small fallback wordlist.")
+    return path
+
+# -------------------------------
+# DNS / IP resolution
+# -------------------------------
+def resolve_ip(host):
+    try:
+        ip = socket.gethostbyname(host)
+        info(f"{host} resolved to IP: {ip}")
         return ip
     except Exception as e:
-        print(f"[-] Failed to resolve {domain}: {e}")
+        warn(f"Failed to resolve {host}: {e}")
         return None
 
+# -------------------------------
+# Subdomain enumeration
+# -------------------------------
 def subdomain_enum(domain):
     if not check_tool("subfinder"):
         return []
-
-    print(f"[+] Enumerating subdomains for {domain}...")
-    os.makedirs("reports", exist_ok=True)
-    output_file = f"reports/{domain}_subdomains.txt"
-    subdomains = []
-
+    note(f"Enumerating subdomains for {domain} ...")
     try:
-        result = subprocess.run(
+        out = subprocess.run(
             ["subfinder", "-d", domain, "-silent"],
             capture_output=True, text=True, check=True
         )
-        subdomains = result.stdout.splitlines()
-        if subdomains:
-            print(f"[+] Found {len(subdomains)} subdomains")
-            with open(output_file, "w") as f:
-                for s in subdomains:
-                    f.write(f"{s}\n")
-            print(f"[+] Subdomains saved to {output_file}")
-        return subdomains
-    except subprocess.CalledProcessError as e:
-        print(f"[-] Subfinder error:\n{e.stderr}")
-        return []
+        subs = [s.strip() for s in out.stdout.splitlines() if s.strip()]
+        info(f"Found {len(subs)} subdomains")
+        os.makedirs("reports", exist_ok=True)
+        with open(f"reports/{domain}_subdomains.txt", "w") as f:
+            f.write("\n".join(subs))
+        return subs
     except Exception as e:
-        print(f"[-] Subfinder unexpected error: {e}")
+        warn(f"Subdomain enumeration failed: {e}")
         return []
 
+# -------------------------------
+# Port scanning (nmap)
+# -------------------------------
 def port_scan(ip):
-    if not ip:
-        return []
+    if not ip: return []
+    if not check_tool("nmap"): return []
 
-    if not check_tool("nmap"):
-        return []
-
-    print(f"[+] Scanning ports for {ip} (fast scan 1-1024)...")
-    nm = nmap.PortScanner()
-    open_ports = []
-
+    note(f"Scanning ports for {ip} ...")
     try:
-        nm.scan(ip, '1-1024', arguments='-T4 --open')  # Only open ports
-        if ip in nm.all_hosts():
-            for proto in nm[ip].all_protocols():
-                ports = nm[ip][proto].keys()
-                open_ports.extend(list(ports))
-        print(f"[+] Open ports for {ip}: {open_ports if open_ports else 'None found'}")
+        out = subprocess.run(
+            ["nmap", "-sS", "-Pn", "-T4", "--top-ports", "1000", ip],
+            capture_output=True, text=True, check=True
+        ).stdout
+        open_ports = []
+        for line in out.splitlines():
+            if "/tcp" in line and "open" in line:
+                port = int(line.split("/tcp")[0].strip())
+                open_ports.append(port)
+        info(f"Open ports for {ip}: {open_ports if open_ports else 'None'}")
+        return open_ports
     except Exception as e:
-        print(f"[-] Nmap scan error for {ip}: {e}")
-
-    return open_ports
-
-def check_directories(url, wordlist=None):
-    if not url:
+        warn(f"Port scan failed: {e}")
         return []
 
-    if not wordlist:
-        wordlist = "/usr/share/wordlists/common_dirs.txt"
+# -------------------------------
+# HTTP helpers
+# -------------------------------
+SESSION = requests.Session()
+SESSION.verify = False
+SESSION.headers.update({"User-Agent": "ReconTool/1.0 (+https://github.com/pratikkhairnar160)"})
 
-    if not os.path.exists(wordlist):
-        print(f"[-] Wordlist {wordlist} not found. Skipping directory scan.")
-        return []
+def head_or_get(url, timeout=5):
+    try:
+        return SESSION.get(url, timeout=timeout, allow_redirects=True)
+    except Exception:
+        return None
 
-    print(f"[+] Checking directories on {url} using {wordlist}...")
-    found_dirs = []
-
-    with open(wordlist, "r", errors="ignore") as f:
+# -------------------------------
+# Directory brute force
+# -------------------------------
+def load_wordlist(path):
+    entries = []
+    with open(path, "r", errors="ignore") as f:
         for line in f:
-            line = line.strip()
-            if not line:
+            s = line.strip()
+            if not s or s.startswith("#") or " " in s or s.startswith("!"):
                 continue
-            test_url = f"{url.rstrip('/')}/{line}"
-            try:
-                r = requests.get(test_url, timeout=3, verify=False)
-                if r.status_code == 200:
-                    print(f"[+] Found directory: {test_url}")
-                    found_dirs.append(test_url)
-            except requests.RequestException:
-                continue
-    return found_dirs
+            entries.append(s)
+    return entries
 
-def fetch_ssl_info(domain):
+def dir_bruteforce(base_url, wordlist_path, threads=20):
+    note(f"Checking directories on {base_url} with {threads} threads ...")
+    found = []
+
+    def probe(path):
+        url = f"{base_url.rstrip('/')}/{path}"
+        try:
+            r = SESSION.get(url, timeout=2)
+            if r.status_code in (200, 204, 301, 302, 401, 403):
+                info(f"Found: {url} [{r.status_code}]")
+                return url
+        except Exception:
+            pass
+        return None
+
+    paths = load_wordlist(wordlist_path)
+    with ThreadPoolExecutor(max_workers=threads) as exe:
+        futures = [exe.submit(probe, p) for p in paths]
+        for fut in as_completed(futures):
+            res = fut.result()
+            if res:
+                found.append(res)
+    return found
+
+# -------------------------------
+# SSL certificate info
+# -------------------------------
+def fetch_ssl_info(host):
     try:
         context = ssl.create_default_context()
-        with socket.create_connection((domain, 443), timeout=3) as sock:
-            with context.wrap_socket(sock, server_hostname=domain) as ssock:
+        with socket.create_connection((host, 443), timeout=5) as sock:
+            with context.wrap_socket(sock, server_hostname=host) as ssock:
                 cert = ssock.getpeercert()
-                issuer = dict(x[0] for x in cert['issuer'])
-                expire = cert['notAfter']
-                print(f"[+] SSL certificate found for {domain} (expires: {expire})")
-                return {"issuer": issuer, "expiry": expire}
+                info(f"SSL certificate found for {host}")
+                return {
+                    "subject": dict(x[0] for x in cert['subject']),
+                    "issuer": dict(x[0] for x in cert['issuer']),
+                    "notBefore": cert['notBefore'],
+                    "notAfter": cert['notAfter']
+                }
     except Exception:
-        print(f"[-] No SSL certificate for {domain}")
-        return "No SSL"
+        warn(f"No SSL certificate for {host}")
+        return None
 
+# -------------------------------
+# HTTP headers
+# -------------------------------
 def fetch_http_headers(url):
-    try:
-        r = requests.get(url, timeout=3, verify=False)
-        headers = r.headers
-        print(f"[+] Fetched headers for {url}")
-        return dict(headers)
-    except Exception:
+    r = head_or_get(url, timeout=5)
+    if r is None:
+        warn(f"Failed to fetch headers for {url}")
         return {}
+    info(f"Fetched headers for {url}")
+    return dict(r.headers)
 
+# -------------------------------
+# CMS detection
+# -------------------------------
 def detect_cms(url):
-    cms = "Not Detected"
-    try:
-        r = requests.get(url, timeout=3, verify=False)
-        html = r.text.lower()
-        if "wp-content" in html: cms = "WordPress"
-        elif "joomla" in html: cms = "Joomla"
-        elif "drupal" in html: cms = "Drupal"
-        print(f"[+] CMS detected for {url}: {cms}")
-    except:
-        pass
+    r = head_or_get(url, timeout=5)
+    if r is None:
+        return "Unknown"
+    html = r.text.lower()
+    if "wp-content" in html or "wordpress" in html:
+        cms = "WordPress"
+    elif "drupal" in html:
+        cms = "Drupal"
+    elif "joomla" in html:
+        cms = "Joomla"
+    else:
+        cms = "Unknown"
+    info(f"CMS detected for {url}: {cms}")
     return cms
-
-def take_screenshot(url, output_dir="reports"):
-    if not SCREENSHOT_ENABLED:
-        return None
-    os.makedirs(output_dir, exist_ok=True)
-    options = Options()
-    options.headless = True
-    driver = webdriver.Chrome(options=options)
-    try:
-        driver.get(url)
-        screenshot_file = f"{output_dir}/{urlparse(url).netloc}_screenshot.png"
-        driver.save_screenshot(screenshot_file)
-        print(f"[+] Screenshot saved: {screenshot_file}")
-        return screenshot_file
-    except Exception as e:
-        print(f"[-] Screenshot failed for {url}: {e}")
-        return None
-    finally:
-        driver.quit()
-
-# -------------------------------
-# Vulnerability Scanners
-# -------------------------------
-def basic_xss_scan(urls):
-    print("[*] Starting XSS scan...")
-    payload = "<script>alert(1)</script>"
-    vulnerable = []
-    for url in urls:
-        if "?" in url:
-            try:
-                r = requests.get(url + payload, timeout=3, verify=False)
-                if payload in r.text:
-                    print(f"[!] XSS found: {url}")
-                    vulnerable.append(url)
-            except:
-                continue
-    return vulnerable
-
-def basic_sqli_scan(urls):
-    print("[*] Starting SQLi scan...")
-    payloads = ["'", "\"", "' OR '1'='1", "\" OR \"1\"=\"1"]
-    vulnerable = []
-    for url in urls:
-        for p in payloads:
-            try:
-                r = requests.get(url + p, timeout=3, verify=False)
-                errors = ["sql syntax", "mysql", "syntax error", "unclosed quotation"]
-                if any(e in r.text.lower() for e in errors):
-                    print(f"[!] Possible SQLi: {url}")
-                    vulnerable.append(url)
-            except:
-                continue
-    return vulnerable
-
-def basic_lfi_scan(urls):
-    print("[*] Starting LFI scan...")
-    payloads = ["../../../../etc/passwd", "/etc/passwd"]
-    vulnerable = []
-    for url in urls:
-        for p in payloads:
-            try:
-                r = requests.get(url + p, timeout=3, verify=False)
-                if "root:" in r.text:
-                    print(f"[!] LFI found: {url}")
-                    vulnerable.append(url)
-            except:
-                continue
-    return vulnerable
-
-def email_leak_scan(urls):
-    print("[*] Scanning for exposed emails...")
-    emails = set()
-    regex = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
-    for url in urls:
-        try:
-            r = requests.get(url, timeout=3, verify=False)
-            found = re.findall(regex, r.text)
-            emails.update(found)
-        except:
-            continue
-    return list(emails)
-
-def admin_page_scan(urls):
-    print("[*] Scanning for admin pages...")
-    admin_pages = ["admin", "administrator", "login", "wp-admin", "cms"]
-    found_pages = []
-    for url in urls:
-        for page in admin_pages:
-            test_url = f"{url.rstrip('/')}/{page}"
-            try:
-                r = requests.get(test_url, timeout=3, verify=False)
-                if r.status_code == 200:
-                    print(f"[+] Admin page found: {test_url}")
-                    found_pages.append(test_url)
-            except:
-                continue
-    return found_pages
 
 # -------------------------------
 # Reporting
 # -------------------------------
 def generate_report(domain, results):
     os.makedirs("reports", exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_file = f"reports/{domain}_recon_{timestamp}.txt"
-
-    with open(report_file, "w") as f:
-        f.write(f"Ultimate Bug Bounty Recon Report\nDomain: {domain}\nGenerated: {timestamp}\n\n")
-        for key, value in results.items():
-            f.write(f"{key}:\n")
-            if isinstance(value, list):
-                for item in value:
-                    f.write(f" - {item}\n")
-            elif isinstance(value, dict):
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    report = f"reports/{domain}_recon_report_{ts}.txt"
+    with open(report, "w") as f:
+        f.write(f"Ultimate Bug Bounty Recon Report\nDomain: {domain}\nGenerated: {ts}\n\n")
+        for section, value in results.items():
+            f.write(f"{section}:\n")
+            if isinstance(value, dict):
                 for k, v in value.items():
-                    f.write(f" {k}: {v}\n")
+                    f.write(f"  {k}: {v}\n")
+            elif isinstance(value, list):
+                for item in value:
+                    f.write(f"  - {item}\n")
             else:
-                f.write(f" - {value}\n")
+                f.write(f"  {value}\n")
             f.write("\n")
-    print(f"[+] Full report saved to {report_file}")
+    info(f"Full report saved to {report}")
 
 # -------------------------------
-# Main Execution
+# Main
 # -------------------------------
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Ultimate Bug Bounty Recon Tool")
-    parser.add_argument("-d", "--domain", required=True, help="Target domain")
-    parser.add_argument("-w", "--wordlist", help="Custom wordlist for directories")
+def main():
+    parser = argparse.ArgumentParser(description="Ultimate Pro Bug Bounty Recon & Vuln Scanner")
+    parser.add_argument("-d", "--domain", required=True, help="Target domain (e.g., example.com)")
+    parser.add_argument("-w", "--wordlist", help="Custom directory wordlist (default auto)")
+    parser.add_argument("--threads", type=int, default=20, help="Threads for HTTP tasks (default 20)")
+    parser.add_argument("--https", action="store_true", help="Also test https:// URLs where applicable")
+    parser.add_argument("--no-screenshots", action="store_true", help="Disable screenshots (if Selenium present)")
     args = parser.parse_args()
 
-    print("[*] Starting Ultimate Bug Bounty Recon Tool...\n")
+    note("Starting Ultimate Pro Recon Tool...\n")
 
+    wordlist = ensure_wordlist(args.wordlist or DEFAULT_WORDLIST)
+
+    results = {}
+
+    ip = resolve_ip(args.domain)
+    results["Domain IP"] = ip or "Failed"
+
+    subs = subdomain_enum(args.domain)
+    results["Subdomains"] = subs
+
+    ports = {}
+    targets_for_ports = set()
+    if ip:
+        targets_for_ports.add(ip)
+    for s in subs:
+        sip = resolve_ip(s)
+        if sip:
+            targets_for_ports.add(sip)
+
+    for target_ip in sorted(targets_for_ports):
+        ports[target_ip] = port_scan(target_ip)
+    results["Open Ports"] = ports
+
+    hosts = [args.domain] + subs
+    base_urls = [f"http://{h}" for h in hosts]
+    if args.https:
+        base_urls += [f"https://{h}" for h in hosts]
+
+    directories = {}
+    for h in hosts:
+        for scheme in (["http"] + (["https"] if args.https else [])):
+            base = f"{scheme}://{h}"
+            directories[base] = dir_bruteforce(base, wordlist, threads=args.threads)
+    results["Directories"] = directories
+
+    results["SSL Info"] = fetch_ssl_info(args.domain)
+
+    headers = {}
+    for b in base_urls:
+        headers[b] = fetch_http_headers(b)
+    results["HTTP Headers"] = headers
+
+    cms = {}
+    for b in base_urls:
+        cms[b] = detect_cms(b)
+    results["CMS"] = cms
+
+    generate_report(args.domain, results)
+    note("\nRecon Completed Successfully!")
+
+if __name__ == "__main__":
     try:
-        results = {}
-        domain_ip = resolve_ip(args.domain)
-        results["Domain IP"] = domain_ip if domain_ip else "Failed"
-
-        subdomains = subdomain_enum(args.domain)
-        results["Subdomains"] = subdomains
-
-        # Ports
-        ports_dict = {}
-        if domain_ip:
-            ports_dict[domain_ip] = port_scan(domain_ip)
-        for sub in subdomains:
-            sub_ip = resolve_ip(sub)
-            if sub_ip:
-                ports_dict[sub_ip] = port_scan(sub_ip)
-        results["Open Ports"] = ports_dict
-
-        # Directories
-        all_targets = [args.domain] + subdomains
-        directories_dict = {}
-        for t in all_targets:
-            url = f"http://{t}"
-            directories_dict[url] = check_directories(url, args.wordlist)
-        results["Directories"] = directories_dict
-
-        # SSL
-        results["SSL Info"] = fetch_ssl_info(args.domain)
-
-        # HTTP headers
-        http_dict = {}
-        for t in all_targets:
-            url = f"http://{t}"
-            http_dict[url] = fetch_http_headers(url)
-        results["HTTP Headers"] = http_dict
-
-        # CMS detection
-        cms_dict = {}
-        for t in all_targets:
-            url = f"http://{t}"
-            cms_dict[url] = detect_cms(url)
-        results["CMS"] = cms_dict
-
-        # Optional screenshot
-        if SCREENSHOT_ENABLED:
-            screenshot_dict = {}
-            for t in all_targets:
-                url = f"http://{t}"
-                screenshot_dict[url] = take_screenshot(url)
-            results["Screenshots"] = screenshot_dict
-
-        # Vulnerability Scans
-        vuln_dict = {}
-        urls_to_test = [f"http://{d}" for d in all_targets]
-        vuln_dict["XSS"] = basic_xss_scan(urls_to_test)
-        vuln_dict["SQLi"] = basic_sqli_scan(urls_to_test)
-        vuln_dict["LFI"] = basic_lfi_scan(urls_to_test)
-        vuln_dict["Exposed Emails"] = email_leak_scan(urls_to_test)
-        vuln_dict["Admin Pages"] = admin_page_scan(urls_to_test)
-        results["Vulnerabilities"] = vuln_dict
-
-        # Generate report
-        generate_report(args.domain, results)
-
-        print("\n[*] Recon Tool Finished Successfully!")
-
+        main()
     except KeyboardInterrupt:
         print("\n[!] Interrupted by user. Exiting...")
         sys.exit(0)
