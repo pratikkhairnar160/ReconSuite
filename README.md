@@ -49,6 +49,8 @@ Automated Bug Bounty Recon Tool is a **Python-based ethical hacking project** fo
 Run the tool:
 python3 recon_tool.py -d example.com
 
+python3 recon_tool.py -d example.com --https --threads 40
+
 Optional flags:
 -w → Use custom wordlist:
 python3 recon_tool.py -d example.com -w /usr/share/wordlists/
