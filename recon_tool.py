@@ -448,4 +448,10 @@ def main():
     generate_report(args.domain, results)
     note("\nRecon Completed Successfully!")
 
-if __name__ ==
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n[!] Interrupted by user. Exiting...")
+        sys.exit(0)
