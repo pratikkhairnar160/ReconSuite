@@ -17,7 +17,9 @@ Automated Reporting: Generates text reports summarizing all findings.
 Installation
 
 Clone the repository:
+
 https://github.com/pratikkhairnar160/Automated-Bug-Bounty-Recon-Tool.git
+
 cd Automated-Bug-Bounty-Recon-Tool
 
 
@@ -60,6 +62,7 @@ Open directories/endpoints
 Example report: example.com_recon_report_20250826_2200.txt
 
 Folder Structure
+
 Automated-Bug-Bounty-Recon-Tool/
 ├── recon_tool.py
 ├── README.md
