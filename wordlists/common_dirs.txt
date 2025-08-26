@@ -1,1 +1,6 @@
-
+admin
+login
+uploads
+images
+css
+js
