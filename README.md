@@ -88,8 +88,8 @@ This tool is intended solely for educational purposes or authorized penetration 
 ## Installation
 Clone the repository:
 ```bash
-git clone https://github.com/pratikkhairnar160/Automated-Bug-Bounty-Recon-Tool.git
-cd Automated-Bug-Bounty-Recon-Tool
+git clone https://github.com/pratikkhairnar160/ReconSuite.git
+cd ReconSuite
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
