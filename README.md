@@ -1,7 +1,7 @@
-# Automated Bug Bounty Recon Tool
+# ReconSuite
 
 ## Overview / Theory
-Automated Bug Bounty Recon Tool is a **Python-based ethical hacking project** for full-spectrum reconnaissance. It demonstrates CEH v13 practical skills and can be used for **educational or authorized penetration testing**.  
+ReconSuite is a **Python-based ethical hacking project** for full-spectrum reconnaissance. It demonstrates CEH v13 practical skills and can be used for **educational or authorized penetration testing**.  
 
 **Capabilities include:**
 - Domain/IP resolution: Automatically detect IPs from a domain.
