@@ -67,7 +67,7 @@ Each stage reads from and writes to a shared `StateManager` (JSON on disk), enab
 ## Installation
 
 ```bash
-git clone https://github.com/your/reconsuite.git
+git clone https://github.com/pratikkhairnar160/ReconSuite.git
 cd ReconSuite
 python3 -m venv venv
 source venv/bin/activate
